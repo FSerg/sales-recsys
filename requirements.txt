@@ -1,8 +1,8 @@
 Werkzeug==2.2.3
 pyzipper==0.3.6
 pandas==2.0.1
+# sqlalchemy==1.4.48
 psycopg2-binary==2.9.6
 requests==2.30.0
-SQLAlchemy==2.0.13
 mlxtend==0.22.0
 requests==2.30.0

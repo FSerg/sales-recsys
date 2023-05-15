@@ -1,8 +1,8 @@
-# from memory_profiler import profile
 import os
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+
 from mlxtend.frequent_patterns import fpmax
 import pyzipper
 import requests
@@ -12,41 +12,39 @@ from prefect.blocks.system import Secret
 
 CHUNK_SIZE = 10000
 
-engine = create_engine(Secret.load("database-url").get())
-try:
-    engine.connect()
-    print("Connected to the database successfully.")
-except SQLAlchemyError as err:
-    text_error = f"Error during connection to the database: {err.__cause__}"
-    raise ValueError(text_error)
 
-
-@flow(name="Process all data")
-def process_all_data(table_name: str, wholesale_support: float, retail_support: float) -> None:
+@flow(name="Sales-recsys main data processing")
+def main_process(filestorer_url: str,
+                 filename_result_arch: str,
+                 table_name: str,
+                 wholesale_support: float, retail_support: float) -> None:
     logger = get_run_logger()
     logger.info("Data processing is started")
-    file1 = process_data(table_name, trans_type="Реализация",
-                         file_name="result_wholesale.csv", support=wholesale_support)
-    file2 = process_data(table_name, trans_type="ЧекККМ",
-                         file_name="result_retail.csv", support=retail_support)
+
+    engine = create_engine(Secret.load("database-url").get())
+    try:
+        with engine.connect() as conn:
+            file1 = process_data(conn, table_name, trans_type="Реализация",
+                                 file_name="result_wholesale.csv", support=wholesale_support)
+            file2 = process_data(conn, table_name, trans_type="ЧекККМ",
+                                 file_name="result_retail.csv", support=retail_support)
+    except SQLAlchemyError as err:
+        raise ValueError(
+            f"Error during connection to the database: {err.__cause__}")
 
     files_to_compress = [file1, file2]
+    result_file = zip_results(filename_result_arch, files_to_compress)
+    store_results(filestorer_url, result_file)
 
-    result_file = zip_files(files_to_compress)
-    store_zip_file(result_file)
 
-
-@flow(name="Process data", flow_run_name="Process data: {trans_type}")
-def process_data(table_name: str, trans_type: str, file_name: str, support: float) -> str:
+@flow(name="Subflow of processing", flow_run_name="{trans_type}")
+def process_data(conn, table_name: str, trans_type: str, file_name: str, support: float) -> str:
     logger = get_run_logger()
 
     query = get_transactions_query(table_name, trans_type)
     df = pd.DataFrame()
-    with engine.connect() as conn:
-        for chunk_df in pd.read_sql_query(text(query), conn, chunksize=CHUNK_SIZE):
-            df = pd.concat([df, chunk_df], ignore_index=True)
-    # for chunk_df in pd.read_sql_query(text(query), conn, chunksize=CHUNK_SIZE):
-    #     df = pd.concat([df, chunk_df], ignore_index=True)
+    for chunk_df in pd.read_sql_query(text(query), conn, chunksize=CHUNK_SIZE):
+        df = pd.concat([df, chunk_df], ignore_index=True)
 
     fin_df = calc_related_products(prepare_df(df), support)
     fin_df[["product1", "product2"]].to_csv(
@@ -93,26 +91,27 @@ def prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     return pivot_df
 
 
-@task(name="Make archive of resulted files")
-def zip_files(files_to_compress: str) -> str:
+@task(name="Archiving results")
+def zip_results(filename_result_arch: str, files_to_compress: str) -> str:
     logger = get_run_logger()
 
-    zip_file_name = os.path.join(os.getcwd(), "result.zip")
+    zip_file_name = os.path.join(os.getcwd(), filename_result_arch)
     secret_block = Secret.load("filestorer-archive-password")
     # with pyzipper.AESZipFile(zip_file_name, 'w', compression=pyzipper.ZIP_STORED, encryption=pyzipper.WZ_AES) as zipf:
     with pyzipper.AESZipFile(zip_file_name, 'w', compression=pyzipper.ZIP_BZIP2, encryption=pyzipper.WZ_AES) as zipf:
         zipf.setpassword(secret_block.get().encode())
         for file in files_to_compress:
             zipf.write(file)
-    logger.info(f"{zip_file_name} is ready")
+
+    fsize = round(os.stat(zip_file_name).st_size / 1024, 2)
+    logger.info(f"File {zip_file_name} is ready, size: {fsize} Kb")
     return zip_file_name
 
 
-@task(name="Send archive to filestorer")
-def store_zip_file(zip_file_name: str) -> None:
+@task(name="Send results to filestorer")
+def store_results(filestorer_url: str, zip_file_name: str) -> None:
     logger = get_run_logger()
 
-    filestorer_url = "https://da-files.f-pix.ru"
     full_url = filestorer_url + "/upload"
     logger.info(f"Uploading file to: {full_url}")
     secret_block = Secret.load("filestorer-auth-token")
@@ -126,10 +125,3 @@ def store_zip_file(zip_file_name: str) -> None:
         logger.error(f"Failed to upload file: {zip_file_name}")
         logger.error(
             f"Code: {response.status_code}, response: {response.text}")
-
-
-if __name__ == "__main__":
-    table_name = "sales_lite"
-    process_all_data(table_name,
-                     wholesale_support=0.005,
-                     retail_support=0.0001)

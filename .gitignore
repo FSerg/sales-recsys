@@ -1,4 +1,7 @@
 .DS_Store
+*deployment.yaml
+*.csv
+*.zip
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

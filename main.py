@@ -1,36 +1,39 @@
 import os
 import pyzipper
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+import psycopg2
 import requests
 import tempfile
 from prefect import flow, task, get_run_logger
 from prefect.blocks.system import Secret
 
-engine = create_engine(Secret.load("database-url").get())
-try:
-    engine.connect()
-    print("Connected to the database successfully.")
-except SQLAlchemyError as err:
-    text_error = f"Error during connection to the database: {err.__cause__}"
-    raise ValueError(text_error)
+from process import main_process
 
 
-@flow(name="Main ETL flow")
-def main(filestorer_url: str, filename_csv_arch: str, filename_result_arch: str, table_name: str) -> None:
+@flow(name="Sales-recsys main ETL-flow")
+def main(filestorer_url: str,
+         filename_csv_arch: str,
+         filename_result_arch: str,
+         table_name: str,
+         wholesale_support: float, retail_support: float) -> None:
     temp_dir, file_path = download(filestorer_url, filename_csv_arch)
     if file_path == None:
         raise ValueError("Failed to download the file.")
 
     extract_csv(temp_dir, file_path)
 
-    with engine.connect() as conn:
+    try:
+        with psycopg2.connect(Secret.load("database-url").get()) as conn:
+            prepare_tables(conn, table_name)
+            import_csv(conn, temp_dir, table_name)
 
-        prepare_tables(conn, table_name)
-        import_csv(conn, temp_dir, table_name)
+    except psycopg2.Error as e:
+        raise ValueError(f"Error connecting to PostgreSQL: {e}")
+
+    main_process(filestorer_url, filename_result_arch,
+                 table_name, wholesale_support, retail_support)
 
 
-@task(name="Download files from filestorer")
+@task(name="Download csv-files archive from filestorer")
 def download(filestorer_url: str, filename_csv_arch: str):
     logger = get_run_logger()
 
@@ -72,7 +75,7 @@ def extract_csv(temp_dir: str, zip_file_path: str) -> None:
     logger.info("CSV-files extracted successfully.")
 
 
-@task(name="Prepare tables in the database")
+@task(name="Prepare tables in DB")
 def prepare_tables(conn, table_name: str):
     logger = get_run_logger()
     sql = f"""CREATE TABLE IF NOT EXISTS {table_name} (
@@ -83,44 +86,46 @@ def prepare_tables(conn, table_name: str):
         product_code VARCHAR(20),
         product_name VARCHAR(255)
         )"""
-    conn.execute(text(sql))
-    conn.commit()
+
+    with conn.cursor() as cursor:
+        cursor.execute(sql)
     logger.info(f"Table {table_name} created")
 
     # Clear table before loading
     sql = f"TRUNCATE {table_name}"
-    conn.execute(text(sql))
-    conn.commit()
+    with conn.cursor() as cursor:
+        cursor.execute(sql)
     logger.info(f"Table {table_name} truncated")
 
 
-@task(name="Import csv files to the database")
+@task(name="Import csv files into DB")
 def import_csv(conn, temp_dir: str, table_name: str) -> None:
     logger = get_run_logger()
     files = os.listdir(temp_dir)
     csv_files = sorted([file for file in files if file.endswith(".csv")])
     logger.info(csv_files)
 
-    cursor = conn.connection.cursor()
-    for csv_file in csv_files:
-        csv_file_path_local = os.path.join(temp_dir, csv_file)
-        if os.stat(csv_file_path_local).st_size <= 3:
-            continue
-        with open(csv_file_path_local, 'r') as f:
-            logger.info(f"Importing {csv_file_path_local}")
-            print(f"Processing file: {f.name}")
-            print(f"Table name: {table_name}")
-            cursor.copy_expert(
-                f"COPY {table_name}(doc_date, doc_number, doc_type, doc_id, product_code, product_name) FROM STDIN WITH DELIMITER ';' QUOTE '`' CSV", f)
+    with conn.cursor() as cursor:
+        for csv_file in csv_files:
+            csv_file_path_local = os.path.join(temp_dir, csv_file)
+            if os.stat(csv_file_path_local).st_size <= 3:
+                continue
+            with open(csv_file_path_local, 'r') as f:
+                logger.info(f"Importing {csv_file_path_local}")
+                print(f"Processing file: {f.name}")
+                print(f"Table name: {table_name}")
+                cursor.copy_expert(
+                    f"COPY {table_name}(doc_date, doc_number, doc_type, doc_id, product_code, product_name) FROM STDIN WITH DELIMITER ';' QUOTE '`' CSV", f)
 
-    cursor.connection.commit()
-    cursor.close()
+        cursor.connection.commit()
+
     logger.info("CSV-files loaded")
 
 
 if __name__ == "__main__":
-    filestorer_url = "https://da-files.f-pix.ru"
-    filename_csv_arch = "files.zip"
-    filename_result_arch = "result.zip"
-    table_name = "sales_lite"
-    main(filestorer_url, filename_csv_arch, filename_result_arch, table_name)
+    main(filestorer_url="https://da-files.f-pix.ru",
+         filename_csv_arch="files.zip",
+         filename_result_arch="result.zip",
+         table_name="sales_lite",
+         wholesale_support=0.005,
+         retail_support=0.0001)
