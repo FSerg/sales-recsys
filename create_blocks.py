@@ -29,12 +29,12 @@ else:
 
 docker_block = DockerContainer(
     image="fserg/prefect-sales-recsys:latest", auto_remove=True)
-docker_block_uuid = docker_block.save("prod", overwrite=True)
+docker_block_uuid = docker_block.save("sales-recsys-docker", overwrite=True)
 print(f"Docker container: {docker_block_uuid}")
 
 
 github_block = GitHub(
-    repository="https://github.com/my-repo/",
+    repository="https://github.com/FSerg/sales-recsys.git",
     # access_token=<my_access_token> # only required for private repos
 )
 # github_block.get_directory("folder-in-repo") # specify a subfolder of repo
