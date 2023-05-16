@@ -31,22 +31,22 @@ if DATABASE_URL:
 else:
     print("DATABASE_URL is empty!")
 
+# Infrastructure Block
 docker_block = DockerContainer(
     image="fserg/prefect-sales-recsys:latest", auto_remove=True)
 docker_block_uuid = docker_block.save("sales-recsys-docker", overwrite=True)
 print(f"Docker container: {docker_block_uuid}")
 
-
+# Storage Block
 github_block = GitHub(
     repository="https://github.com/FSerg/sales-recsys.git",
-    # access_token=<my_access_token> # only required for private repos
+    # access_token=os.getenv("GITHUB_TOKEN") # only required for private repos
 )
-# github_block.get_directory("folder-in-repo") # specify a subfolder of repo
 github_block_uuid = github_block.save("sales-recsys-repo", overwrite=True)
 print(f"Github block: {github_block_uuid}")
 
 deployment = Deployment.build_from_flow(
-    name="docker-example",
+    name="sales-recsys-docker-deployment",
     flow=main,
     work_queue_name="agent1-queue",
     tags=["sales-recsys"],
