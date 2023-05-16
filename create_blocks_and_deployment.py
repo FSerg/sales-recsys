@@ -46,7 +46,8 @@ github_block_uuid = github_block.save("sales-recsys-repo", overwrite=True)
 print(f"Github block: {github_block_uuid}")
 
 deployment = Deployment.build_from_flow(
-    name="sales-recsys-docker-deployment",
+    # name="sales-recsys-docker-deployment",
+    name="Sales-recsys docker deployment",
     flow=main,
     work_queue_name="agent1-queue",
     tags=["sales-recsys"],

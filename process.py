@@ -13,7 +13,7 @@ from prefect.blocks.system import Secret
 CHUNK_SIZE = 10000
 
 
-@flow(name="Sales-recsys main data processing")
+@flow(name="02. Sales-recsys main data processing")
 def main_process(filestorer_url: str,
                  filename_result_arch: str,
                  table_name: str,
@@ -37,7 +37,7 @@ def main_process(filestorer_url: str,
     store_results(filestorer_url, result_file)
 
 
-@flow(name="Subflow of processing", flow_run_name="{trans_type}")
+@flow(name="03. Subflow processing", flow_run_name="Doc type: {trans_type}")
 def process_data(conn, table_name: str, trans_type: str, file_name: str, support: float) -> str:
     logger = get_run_logger()
 

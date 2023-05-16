@@ -9,7 +9,7 @@ from prefect.blocks.system import Secret
 from process import main_process
 
 
-@flow(name="Sales-recsys main ETL-flow")
+@flow(name="01. Sales-recsys main ETL-flow")
 def main(filestorer_url: str,
          filename_csv_arch: str,
          filename_result_arch: str,
