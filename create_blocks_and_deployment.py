@@ -33,7 +33,8 @@ else:
 
 # Infrastructure Block
 docker_block = DockerContainer(
-    image="fserg/prefect-sales-recsys:latest", auto_remove=True)
+    image="fserg/prefect-sales-recsys:latest", auto_remove=True,
+    env={"TZ": "Europe/Moscow"})
 docker_block_uuid = docker_block.save("sales-recsys-docker", overwrite=True)
 print(f"Docker container: {docker_block_uuid}")
 
@@ -45,8 +46,8 @@ github_block = GitHub(
 github_block_uuid = github_block.save("sales-recsys-repo", overwrite=True)
 print(f"Github block: {github_block_uuid}")
 
+# Actual deployment
 deployment = Deployment.build_from_flow(
-    # name="sales-recsys-docker-deployment",
     name="Sales-recsys docker deployment",
     flow=main,
     work_queue_name="agent1-queue",
